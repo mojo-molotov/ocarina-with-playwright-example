@@ -143,6 +143,18 @@ class SacredUploadPage(PlaywrightTitleMixin, POMBase):
         ]
 
         images_input = self._images_input
+        # Mirror ocarina-example's `arguments[0].value = ''` workaround: when the
+        # same file is re-selected (random.choice can repeat the previous pick),
+        # the input's value is unchanged, so the browser fires NO `change` event
+        # and react-dropzone's onDrop never runs — no new preview appears and the
+        # preview-count wait times out (~1/3 of the time on the cancel/delete
+        # scenarios where a second add follows). Clearing the value first
+        # guarantees a value change, hence a `change` event, on every add.
+        self._driver.submit(
+            lambda page: page.locator(images_input).first.evaluate(
+                "el => { el.value = ''; }"
+            )
+        )
         self._driver.submit(
             lambda page: page.locator(images_input).first.set_input_files(
                 selected, timeout=int(timeout * 1000)
