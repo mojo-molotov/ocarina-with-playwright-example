@@ -4,7 +4,7 @@ version = "0.0.0"
 description = "Toy project using Ocarina, driven by its Playwright adapter"
 requires-python = ">=3.14"
 dependencies = [
-    "ocarina>=1.1.4",
+    "ocarina>=1.1.8",
     "python-docx>=1.2.0",
     "playwright>=1.49.0",
     "python-dotenv>=1.2.2",

@@ -68,12 +68,15 @@ class HumanizedPlaywrightDriver(PlaywrightDriver):  # type: ignore[misc]
         return self._config
 
     def fill(self, selector: str, text: str) -> None:
-        """Type ``text`` into ``selector`` like a human, on the owner thread."""
-        config = self._config
+        """Type ``text`` into ``selector`` like a human.
 
-        self._driver.submit(
-            lambda page: humanized_type_with_config(page, selector, text, config)
-        )
+        Orchestrates on the worker thread; ``humanized_type_with_config`` marshals
+        each keystroke onto the owner thread through its own ``submit`` (see
+        :mod:`lib.ext.playwright.humanize.keyboard`). It is deliberately *not*
+        wrapped in a single ``submit`` here: doing so would put the whole
+        multi-second routine on the owner thread under one liveness budget.
+        """
+        humanized_type_with_config(self._driver, selector, text, self._config)
 
     def __getattr__(self, name: str):  # noqa: ANN204
         """Delegate any unrecognized attribute to the wrapped PlaywrightDriver."""

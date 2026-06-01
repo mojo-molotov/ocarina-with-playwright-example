@@ -8,19 +8,33 @@ called ``element.send_keys(...)``, this version drives the keyboard through a
 Playwright ``Locator`` (``press_sequentially`` for text, ``press("Backspace")``
 for corrections).
 
-Because Playwright's sync objects are bound to the driver's owner thread, the
-whole typing routine is meant to run *inside* a single ``PlaywrightDriver.submit``
-call (see :mod:`lib.ext.playwright.humanize.proxy`), so the ``time.sleep`` pauses
-happen on the owner thread, exactly like Selenium blocked the worker thread.
+Threading model — one keystroke per ``submit``, sleeps on the worker thread:
+    The orchestration (the typing loop, the RNG decisions and the ``time.sleep``
+    pauses) runs on the *worker* thread — exactly where Selenium blocked. Only
+    the discrete browser actions (focus, a single key press, a backspace) are
+    marshalled onto the driver's owner thread, each through its own
+    ``PlaywrightDriver.submit`` (see :mod:`lib.ext.playwright.humanize.proxy`).
+
+    This is deliberate. The earlier port ran the *whole* routine inside a single
+    ``submit``, so one fill occupied the owner thread for its entire wall-clock
+    duration. Ocarina's Playwright driver now declares a driver dead when a
+    single ``submit`` overruns its liveness ceiling (``call_timeout``, default
+    180 s); a long-but-healthy fill (large text, high ``typo_rate``, low ``wpm``)
+    would have been mistaken for a crash, retried, then skipped. Splitting per
+    keystroke caps every ``submit`` at one key press, so the ceiling is
+    unreachable no matter the text length — and the owner thread stays responsive
+    to the healthcheck/watcher between keystrokes instead of being monopolised.
+
+    Locators are never held across ``submit`` calls: each action re-resolves
+    ``page.locator(selector).first`` (cheap, and the only owner-thread-safe
+    idiom — Locators are owner-thread bound). Playwright auto-focuses the element
+    on every ``press``/``press_sequentially``, so re-resolving per keystroke is
+    behaviourally identical to holding one handle.
 
 Usage:
 
-    from playwright.sync_api import sync_playwright
-
-    with sync_playwright() as p:
-        page = p.chromium.launch().new_page()
-        page.goto("https://example.com/login")
-        humanized_type(page, "#username", "napoleon@mail.com", wpm=70, typo_rate=0.06)
+    driver = HumanizedPlaywrightDriver(raw_driver, wpm=70, typo_rate=0.06)
+    humanized_type(driver, "#username", "napoleon@mail.com", wpm=70, typo_rate=0.06)
 
 """
 
@@ -29,7 +43,8 @@ import time
 from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
-    from playwright.sync_api import Locator, Page
+    from ocarina.infra.playwright.driver import PlaywrightDriver
+    from playwright.sync_api import Page
 
 
 class KeyboardConfig(TypedDict, total=False):
@@ -132,19 +147,37 @@ def _human_delay(base: float, burst_rate: float, hesitation_rate: float) -> None
     time.sleep(delay)
 
 
-def _press(locator: Locator, text: str) -> None:
-    """Type literal ``text`` into the focused locator, one key event per char."""
+def _focus_and_clear(driver: PlaywrightDriver, selector: str) -> None:
+    """Focus the field and empty it — one marshalled action on the owner thread."""
+
+    def _do(page: Page) -> None:
+        element = page.locator(selector).first
+        element.click()
+        element.fill("")
+
+    driver.submit(_do)
+
+
+def _press(driver: PlaywrightDriver, selector: str, text: str) -> None:
+    """Type literal ``text`` into ``selector``, one marshalled key event per char.
+
+    Re-resolves the locator inside the ``submit`` (Locators are owner-thread
+    bound and must never be held across calls); ``press_sequentially`` auto-
+    focuses, so this is equivalent to holding a single handle.
+    """
     if text:
-        locator.press_sequentially(text)
+        driver.submit(
+            lambda page: page.locator(selector).first.press_sequentially(text)
+        )
 
 
-def _backspace(locator: Locator) -> None:
-    """Erase one character before the caret."""
-    locator.press("Backspace")
+def _backspace(driver: PlaywrightDriver, selector: str) -> None:
+    """Erase one character before the caret — one marshalled action."""
+    driver.submit(lambda page: page.locator(selector).first.press("Backspace"))
 
 
 def humanized_type(  # noqa: PLR0912, PLR0913, PLR0915
-    page: Page,
+    driver: PlaywrightDriver,
     selector: str,
     text: str,
     wpm: int = 80,
@@ -156,11 +189,13 @@ def humanized_type(  # noqa: PLR0912, PLR0913, PLR0915
 ) -> None:
     """Type a string into a Playwright field in a human-like fashion.
 
-    Focuses the element matched by ``selector``, clears it, then types ``text``
-    character by character with variable keystroke delays, natural hesitations,
-    bursts of fast typing, and two kinds of typo corrections: immediate
-    (catch-and-fix right away) and late (keep typing for a few chars, then
-    backspace back to the mistake and retype cleanly).
+    Runs on the *worker* thread: focuses the element matched by ``selector``,
+    clears it, then types ``text`` character by character with variable keystroke
+    delays, natural hesitations, bursts of fast typing, and two kinds of typo
+    corrections: immediate (catch-and-fix right away) and late (keep typing for a
+    few chars, then backspace back to the mistake and retype cleanly). Each
+    browser action is marshalled onto the owner thread via its own
+    ``driver.submit``; the ``time.sleep`` pauses happen here, between submits.
 
     Raises:
         ValueError: If any parameter is out of its valid range.
@@ -190,9 +225,7 @@ def humanized_type(  # noqa: PLR0912, PLR0913, PLR0915
 
     base_delay = 60 / (wpm * 5)
 
-    element = page.locator(selector).first
-    element.click()
-    element.fill("")
+    _focus_and_clear(driver, selector)
 
     i = 0
     while i < len(text):
@@ -209,11 +242,11 @@ def humanized_type(  # noqa: PLR0912, PLR0913, PLR0915
                 actually_typed = min(blind_chars, len(text) - i - 1)
                 blind_sequence = text[i + 1 : i + 1 + actually_typed]
 
-                _press(element, typo_char)
+                _press(driver, selector, typo_char)
 
                 for c in blind_sequence:
                     _human_delay(base_delay, burst_rate, hesitation_rate)
-                    _press(element, c)
+                    _press(driver, selector, c)
 
                 time.sleep(random.uniform(0.3, 0.7))  # noqa: S311
 
@@ -222,27 +255,27 @@ def humanized_type(  # noqa: PLR0912, PLR0913, PLR0915
                     if random.random() < 0.1:  # noqa: PLR2004, S311
                         delay += random.uniform(0.1, 0.3)  # noqa: S311
                     time.sleep(delay)
-                    _backspace(element)
+                    _backspace(driver, selector)
 
                 time.sleep(random.uniform(0.2, 0.5))  # noqa: S311
 
-                _press(element, char)
+                _press(driver, selector, char)
 
                 for c in blind_sequence:
                     _human_delay(base_delay, burst_rate, hesitation_rate)
-                    _press(element, c)
+                    _press(driver, selector, c)
 
                 i += actually_typed + 1
                 _human_delay(base_delay, burst_rate, hesitation_rate)
                 continue
 
-            _press(element, typo_char)
-            _backspace(element)
-            _press(element, char)
+            _press(driver, selector, typo_char)
+            _backspace(driver, selector)
+            _press(driver, selector, char)
             time.sleep(random.uniform(0.1, 0.4))  # noqa: S311
 
         else:
-            _press(element, char)
+            _press(driver, selector, char)
             if i < len(text) - 1:
                 _human_delay(base_delay, burst_rate, hesitation_rate)
 
@@ -250,10 +283,10 @@ def humanized_type(  # noqa: PLR0912, PLR0913, PLR0915
 
 
 def humanized_type_with_config(
-    page: Page,
+    driver: PlaywrightDriver,
     selector: str,
     text: str,
     config: KeyboardConfig,
 ) -> None:
     """Type a string into a Playwright field using a KeyboardConfig mapping."""
-    humanized_type(page, selector, text, **config)
+    humanized_type(driver, selector, text, **config)
