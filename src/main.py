@@ -83,6 +83,7 @@ if __name__ == "__main__":
                         ("Generate DOCX proofs plugin",)
                     ),
                     output_root=Path.cwd() / ".reports" / "tests_docx_output",
+                    max_workers=20,
                 ),
                 lambda: generate_json_results(
                     results=results,
