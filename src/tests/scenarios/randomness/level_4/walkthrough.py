@@ -94,7 +94,7 @@ def traverse_random_pages(driver: PlaywrightDriver, logger: ILogger):
         .success(just_log_success("Opened the madness page!")),
     )
 
-    go_from_cors_page_to_homepage: Sequence[ChainRunner[Any]] = [
+    go_from_cors_page_to_homepage = (
         drive_page(
             act(on_cors_page, verify_cors_page)
             .failure(log_error_with_current_url("Failed to verify the CORS page..."))
@@ -147,9 +147,9 @@ def traverse_random_pages(driver: PlaywrightDriver, logger: ILogger):
                 )
             )
         ),
-    ]
+    )
 
-    go_from_ids_bypassed_page_to_homepage: Sequence[ChainRunner[Any]] = [
+    go_from_ids_bypassed_page_to_homepage = (
         drive_page(
             act(
                 on_ids_bypassed_page,
@@ -186,7 +186,7 @@ def traverse_random_pages(driver: PlaywrightDriver, logger: ILogger):
                 )
             )
         ),
-    ]
+    )
 
     go_from_this_is_bastia_page_to_random_dsed_page = drive_page(
         act(on_this_is_bastia_page, verify_this_is_bastia_page)
