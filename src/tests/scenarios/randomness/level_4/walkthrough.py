@@ -1,6 +1,6 @@
 """Walkthrough, traversing random pages."""
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ocarina.custom_types.scenario import Scenario
 from ocarina.dsl.testing.playwright.create_test import create_playwright_test
@@ -50,9 +50,6 @@ from pages.madness.matchers import MadnessPageMatchers
 from pages.madness.this_is_bastia import ThisIsBastiaPage
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from ocarina.dsl.testing_with_railway.chain_actions import ChainRunner
     from ocarina.infra.playwright.driver import PlaywrightDriver
     from ocarina.ports.ilogger import ILogger
 
