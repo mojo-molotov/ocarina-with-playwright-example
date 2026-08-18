@@ -176,7 +176,7 @@ def _backspace(driver: PlaywrightDriver, selector: str) -> None:
     driver.submit(lambda page: page.locator(selector).first.press("Backspace"))
 
 
-def humanized_type(  # noqa: PLR0912, PLR0913, PLR0915
+def humanized_type(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917
     driver: PlaywrightDriver,
     selector: str,
     text: str,
